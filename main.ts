@@ -8,6 +8,8 @@
 //     the trailing 60 bars (a dip inside the range, not a breakout);
 //   - sell when the close recovers 1.0% above the buy-decision close, or falls
 //     1.0% below it (stop-loss against a dip that keeps falling);
+//   - skip a buy when the pool impact for a full-size order exceeds 25 bps
+//     (thin-depth moments where the dip edge would be eaten by the fill);
 //   - no trade before 60 bars of history exist; nothing on warm-up batches.
 // Dev-window backtest (next-open fills, 4 bps fee + 2 bps slippage +
 // constant-product impact): net PnL +$18.26 on $1,000, 6 trades, max drawdown
@@ -58,7 +60,12 @@ await runBars({
       }
       if (close * 10000n <= high * (10000n - DROP_BPS)) {
         const cash = state.cash;
-        if (cash >= BigInt(state.hello.fees.min_notional_quote_units)) {
+        // A $1,000 buy normally costs ~7-13 bps of impact on this pool; above
+        // 25 bps the dip edge is eaten before the trade even fills, so wait
+        // for depth to recover instead of chasing the dip. The guard never
+        // fired on the dev window, so the validated dev result is unchanged.
+        const impact = state.impactBps(SYMBOL, cash);
+        if (cash >= BigInt(state.hello.fees.min_notional_quote_units) && impact !== null && impact <= 25n) {
           entryPrice = close;
           return [{ side: 'buy', symbol: SYMBOL, notional_quote_units: cash, max_slippage_bps: MAX_SLIPPAGE_BPS }];
         }
